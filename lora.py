@@ -1,6 +1,9 @@
 import gc
+import machine
 from machine import Pin
-from time import sleep
+import time
+import struct
+from ucollections import namedtuple
 
 TX_BASE_ADDR = 0x00
 RX_BASE_ADDR = 0x00
@@ -41,14 +44,20 @@ MODE_SLEEP = 0x00
 MODE_STDBY = 0x01
 MODE_TX = 0x03
 MODE_RX_CONTINUOUS = 0x05
+MODE_CAD = 0x7
 
-IRQ_TX_DONE_MASK = 0x08
+IRQ_RX_TIMEOUT = 0x80
+IRQ_RX_DONE = 0x40
 IRQ_PAYLOAD_CRC_ERROR_MASK = 0x20
+IRQ_VALID_HEADER = 0x10
+IRQ_TX_DONE_MASK = 0x08
+IRQ_CAD_DONE = 0x04
+IRQ_FHSS_CHANGE_CHANNEL = 0x2
+IRQ_CAD_DETECTED = 0x01
 
 MAX_PKT_LENGTH = 255
 
-class LoRa:
-
+class LoRa(object):
     def __init__(self, spi, **kw):
         self.spi = spi
         self.cs = kw['cs']
@@ -98,11 +107,23 @@ class LoRa:
         self._write(REG_PAYLOAD_LENGTH, n + m)
 
     def send(self, x):
+        if self._read(REG_IRQ_FLAGS) & IRQ_CAD_DETECTED:
+            return -1
+        if self._read(REG_IRQ_FLAGS) & IRQ_CAD_DONE:
+            return -1
         if isinstance(x, str):
             x = x.encode()
         self.begin_packet()
         self.write_packet(x)
         self.end_packet()
+        return 0
+
+    def sendto(self, header_from, header_to, header_id, header_flags, data):
+        m=struct.pack('BBBB', header_from, header_to, header_id, header_flags)
+        ret = -1
+        while ret == -1:
+            ret = self.send(m+data)
+        return ret
 
     def _get_irq_flags(self):
         f = self._read(REG_IRQ_FLAGS)
@@ -134,8 +155,7 @@ class LoRa:
 
     def set_frequency(self, frequency):
         self._frequency = frequency
-        hz = frequency * 1000000.0
-        x = round(hz / 61.03515625)
+        x = int((self._frequency * 1000000.0) / 61.03515625)
         self._write(REG_FRF_MSB, (x >> 16) & 0xff)
         self._write(REG_FRF_MID, (x >> 8) & 0xff)
         self._write(REG_FRF_LSB, x & 0xff)
@@ -202,11 +222,26 @@ class LoRa:
     def recv(self):
         self._write(REG_OP_MODE, MODE_LORA | MODE_RX_CONTINUOUS) 
 
+    def cad(self):
+        self._write(REG_OP_MODE, MODE_LORA | MODE_CAD) 
+
     def _irq_recv(self, event_source):
         f = self._get_irq_flags()
         if f & IRQ_PAYLOAD_CRC_ERROR_MASK == 0:
             if self._on_recv:
-                self._on_recv(self._read_payload())
+                snr = self.get_snr()
+                rssi = self.get_rssi()
+                packet, packet_len=self._read_payload()
+                header_to = packet[0]
+                header_from = packet[1]
+                header_id = packet[2]
+                header_flags = packet[3]
+                message = bytes(packet[4:]) if packet_len > 4 else b''
+                payload = namedtuple(
+                    "Payload",
+                    ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
+                )(message, header_to, header_from, header_id, header_flags, rssi, snr)
+                self._on_recv(payload)
 
     def _read_payload(self):
         self._write(REG_FIFO_ADDR_PTR, self._read(REG_FIFO_RX_CURRENT_ADDR))
@@ -218,7 +253,7 @@ class LoRa:
         for i in range(n):
             payload.append(self._read(REG_FIFO))
         gc.collect()
-        return bytes(payload)
+        return bytes(payload), n
 
     def _transfer(self, addr, x=0x00):
         resp = bytearray(1)
