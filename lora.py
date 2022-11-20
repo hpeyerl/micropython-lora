@@ -119,7 +119,7 @@ class LoRa(object):
         return 0
 
     def sendto(self, header_from, header_to, header_id, header_flags, data):
-        m=struct.pack('BBBB', header_from, header_to, header_id, header_flags)
+        m=struct.pack('BBBB', header_to, header_from, header_id, header_flags)
         ret = -1
         while ret == -1:
             ret = self.send(m+data)
