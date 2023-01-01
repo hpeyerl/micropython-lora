@@ -232,16 +232,17 @@ class LoRa(object):
                 snr = self.get_snr()
                 rssi = self.get_rssi()
                 packet, packet_len=self._read_payload()
-                header_to = packet[0]
-                header_from = packet[1]
-                header_id = packet[2]
-                header_flags = packet[3]
-                message = bytes(packet[4:]) if packet_len > 4 else b''
-                payload = namedtuple(
-                    "Payload",
-                    ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
-                )(message, header_to, header_from, header_id, header_flags, rssi, snr)
-                self._on_recv(payload)
+                if packet_len > 1:
+                    header_to = packet[0]
+                    header_from = packet[1]
+                    header_id = packet[2]
+                    header_flags = packet[3]
+                    message = bytes(packet[4:]) if packet_len > 4 else b''
+                    payload = namedtuple(
+                        "Payload",
+                        ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
+                    )(message, header_to, header_from, header_id, header_flags, rssi, snr)
+                    self._on_recv(payload)
 
     def _read_payload(self):
         self._write(REG_FIFO_ADDR_PTR, self._read(REG_FIFO_RX_CURRENT_ADDR))
