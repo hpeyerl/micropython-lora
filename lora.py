@@ -232,12 +232,15 @@ class LoRa(object):
                 snr = self.get_snr()
                 rssi = self.get_rssi()
                 packet, packet_len=self._read_payload()
-                if packet_len > 1:
-                    header_to = packet[0]
-                    header_from = packet[1]
-                    header_id = packet[2]
-                    header_flags = packet[3]
-                    message = bytes(packet[4:]) if packet_len > 4 else b''
+                if packet_len > 4:   # Sometimes get a runt packet.
+                    try:
+                        header_to = packet[0]
+                        header_from = packet[1]
+                        header_id = packet[2]
+                        header_flags = packet[3]
+                        message = bytes(packet[4:]) if packet_len > 4 else b''
+                    except: # Sometimes get IndexError from Garbage packet
+                        return
                     payload = namedtuple(
                         "Payload",
                         ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
